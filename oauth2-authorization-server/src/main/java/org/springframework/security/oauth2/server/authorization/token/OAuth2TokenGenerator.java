@@ -24,6 +24,8 @@ import org.springframework.security.oauth2.server.authorization.OAuth2Authorizat
  * Implementations of this interface are responsible for generating an {@link OAuth2Token}
  * using the attributes contained in the {@link OAuth2TokenContext}.
  *
+ * 根据OAuth2TokenContext 中包含的属性去生成OAuth2Token ...
+ *
  * @author Joe Grandja
  * @since 0.2.3
  * @see OAuth2Token

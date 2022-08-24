@@ -42,6 +42,9 @@ import org.springframework.util.StringUtils;
  * to a {@link #getRegisteredClientId() client}, by the {@link #getPrincipalName() resource owner}
  * or itself in the case of the {@code client_credentials} grant type.
  *
+ *
+ * 客户端授权信息 ...(一个成功授权的 客户端,它携带了 access_token 等信息) ...
+ *
  * @author Joe Grandja
  * @author Krisztian Toth
  * @since 0.0.1

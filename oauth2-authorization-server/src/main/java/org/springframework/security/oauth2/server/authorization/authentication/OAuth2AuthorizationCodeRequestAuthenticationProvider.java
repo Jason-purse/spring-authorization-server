@@ -62,6 +62,8 @@ import org.springframework.web.util.UriComponentsBuilder;
  * An {@link AuthenticationProvider} implementation for the OAuth 2.0 Authorization Request (and Consent)
  * used in the Authorization Code Grant.
  *
+ * 授权码授予流的 OAuth2.0 授权请求的  AuthenticationProvider 实现 ...
+ *
  * @author Joe Grandja
  * @author Steve Riesenberg
  * @since 0.1.2
@@ -76,6 +78,8 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 	private static final String ERROR_URI = "https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.2.1";
 	private static final String PKCE_ERROR_URI = "https://datatracker.ietf.org/doc/html/rfc7636#section-4.4.1";
 	private static final OAuth2TokenType STATE_TOKEN_TYPE = new OAuth2TokenType(OAuth2ParameterNames.STATE);
+
+	// 默认的状态key 生成器 ...
 	private static final StringKeyGenerator DEFAULT_STATE_GENERATOR =
 			new Base64StringKeyGenerator(Base64.getUrlEncoder());
 	private static final Function<String, OAuth2AuthenticationValidator> DEFAULT_AUTHENTICATION_VALIDATOR_RESOLVER =
@@ -83,6 +87,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 	private final RegisteredClientRepository registeredClientRepository;
 	private final OAuth2AuthorizationService authorizationService;
 	private final OAuth2AuthorizationConsentService authorizationConsentService;
+	// 授权码生成器..
 	private OAuth2TokenGenerator<OAuth2AuthorizationCode> authorizationCodeGenerator = new OAuth2AuthorizationCodeGenerator();
 	private Function<String, OAuth2AuthenticationValidator> authenticationValidatorResolver = DEFAULT_AUTHENTICATION_VALIDATOR_RESOLVER;
 	private Consumer<OAuth2AuthorizationConsentAuthenticationContext> authorizationConsentCustomizer;
@@ -111,6 +116,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 
 		return authorizationCodeRequestAuthentication.isConsent() ?
 				authenticateAuthorizationConsent(authentication) :
+				// 先认证通过才行 ...
 				authenticateAuthorizationRequest(authentication);
 	}
 
@@ -175,42 +181,59 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		this.authorizationConsentCustomizer = authorizationConsentCustomizer;
 	}
 
+	// 来到这里 认证 ..
 	private Authentication authenticateAuthorizationRequest(Authentication authentication) throws AuthenticationException {
 		OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication =
 				(OAuth2AuthorizationCodeRequestAuthenticationToken) authentication;
 
+		// 从 注册的client repository 中获取 已经注册的 client ...
 		RegisteredClient registeredClient = this.registeredClientRepository.findByClientId(
 				authorizationCodeRequestAuthentication.getClientId());
+		// 拿不到直接返回错误 ..
 		if (registeredClient == null) {
 			throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.CLIENT_ID,
 					authorizationCodeRequestAuthentication, null);
 		}
 
 		Map<Object, Object> context = new HashMap<>();
+		// 注册的Client ...
 		context.put(RegisteredClient.class, registeredClient);
+
+		// 产生 OAuth2 认证上下文 ...
 		OAuth2AuthenticationContext authenticationContext = new OAuth2AuthenticationContext(
 				authorizationCodeRequestAuthentication, context);
 
+		// 解析认证校验器 ...
 		OAuth2AuthenticationValidator redirectUriValidator = resolveAuthenticationValidator(OAuth2ParameterNames.REDIRECT_URI);
+		// 验证重定向 ..
 		redirectUriValidator.validate(authenticationContext);
 
+		// 如果不是授权码授予类型 ...
 		if (!registeredClient.getAuthorizationGrantTypes().contains(AuthorizationGrantType.AUTHORIZATION_CODE)) {
+			// 抛出异常,未授权的客户端  ...
 			throwError(OAuth2ErrorCodes.UNAUTHORIZED_CLIENT, OAuth2ParameterNames.CLIENT_ID,
 					authorizationCodeRequestAuthentication, registeredClient);
 		}
 
+		// 获取 scope 验证其 .. 进行验证 ..
 		OAuth2AuthenticationValidator scopeValidator = resolveAuthenticationValidator(OAuth2ParameterNames.SCOPE);
 		scopeValidator.validate(authenticationContext);
 
+		// 对于 public client(进行 code_challenge) .. -RFC 7636(PKCE) ..
 		// code_challenge (REQUIRED for public clients) - RFC 7636 (PKCE)
 		String codeChallenge = (String) authorizationCodeRequestAuthentication.getAdditionalParameters().get(PkceParameterNames.CODE_CHALLENGE);
+		// 如果存在
 		if (StringUtils.hasText(codeChallenge)) {
+			// 获取方法 ..
 			String codeChallengeMethod = (String) authorizationCodeRequestAuthentication.getAdditionalParameters().get(PkceParameterNames.CODE_CHALLENGE_METHOD);
+			// 如果没有或者方法不是 s256 ...
 			if (!StringUtils.hasText(codeChallengeMethod) || !"S256".equals(codeChallengeMethod)) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, PkceParameterNames.CODE_CHALLENGE_METHOD, PKCE_ERROR_URI,
 						authorizationCodeRequestAuthentication, registeredClient, null);
 			}
+			// 需要 Proof key
 		} else if (registeredClient.getClientSettings().isRequireProofKey()) {
+			// 也就是 必须提供 code_challenge ...
 			throwError(OAuth2ErrorCodes.INVALID_REQUEST, PkceParameterNames.CODE_CHALLENGE, PKCE_ERROR_URI,
 					authorizationCodeRequestAuthentication, registeredClient, null);
 		}
@@ -219,12 +242,16 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		// The request is valid - ensure the resource owner is authenticated
 		// ---------------
 
+		// 确保资源拥有者是认证了的 ...
 		Authentication principal = (Authentication) authorizationCodeRequestAuthentication.getPrincipal();
+		// 拿取身份,判断是否认证 ..
 		if (!isPrincipalAuthenticated(principal)) {
 			// Return the authorization request as-is where isAuthenticated() is false
+			// 没有认证的情况下,直接返回 ...
 			return authorizationCodeRequestAuthentication;
 		}
 
+		// 如果是认证了的 ...
 		OAuth2AuthorizationRequest authorizationRequest = OAuth2AuthorizationRequest.authorizationCode()
 				.authorizationUri(authorizationCodeRequestAuthentication.getAuthorizationUri())
 				.clientId(registeredClient.getClientId())
@@ -234,19 +261,26 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 				.additionalParameters(authorizationCodeRequestAuthentication.getAdditionalParameters())
 				.build();
 
+		// 从当前的授权赞成service 中获取 有关信息 ...
 		OAuth2AuthorizationConsent currentAuthorizationConsent = this.authorizationConsentService.findById(
 				registeredClient.getId(), principal.getName());
 
+		// 需要许可的 限制  ..,然后许可成功之后,就跳过这个阶段 ...
 		if (requireAuthorizationConsent(registeredClient, authorizationRequest, currentAuthorizationConsent)) {
+			// 重新生成 state ...
 			String state = DEFAULT_STATE_GENERATOR.generateKey();
+			// 然后构造授权 ...
 			OAuth2Authorization authorization = authorizationBuilder(registeredClient, principal, authorizationRequest)
 					.attribute(OAuth2ParameterNames.STATE, state)
 					.build();
+			// 然后保存 ..
 			this.authorizationService.save(authorization);
 
+			// 当前的 不为空,则获取当前授权的scopes ...
 			Set<String> currentAuthorizedScopes = currentAuthorizationConsent != null ?
 					currentAuthorizationConsent.getScopes() : null;
 
+			// 然后返回 ..
 			return OAuth2AuthorizationCodeRequestAuthenticationToken.with(registeredClient.getClientId(), principal)
 					.authorizationUri(authorizationRequest.getAuthorizationUri())
 					.scopes(currentAuthorizedScopes)
@@ -255,26 +289,36 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 					.build();
 		}
 
+		// 否则创建  OAuth2TokenContext
 		OAuth2TokenContext tokenContext = createAuthorizationCodeTokenContext(
 				authorizationCodeRequestAuthentication, registeredClient, null, authorizationRequest.getScopes());
+
+		// 然后授权码生成器会使用它 生成授权码
 		OAuth2AuthorizationCode authorizationCode = this.authorizationCodeGenerator.generate(tokenContext);
 		if (authorizationCode == null) {
+			// 这就是服务器的问题了 ...
 			OAuth2Error error = new OAuth2Error(OAuth2ErrorCodes.SERVER_ERROR,
 					"The token generator failed to generate the authorization code.", ERROR_URI);
 			throw new OAuth2AuthorizationCodeRequestAuthenticationException(error, null);
 		}
 
+		// 然后生成一个OAuth2Authorization ..
 		OAuth2Authorization authorization = authorizationBuilder(registeredClient, principal, authorizationRequest)
 				.authorizedScopes(authorizationRequest.getScopes())
 				.token(authorizationCode)
 				.build();
+
+		// 保存登录的信息 ...
 		this.authorizationService.save(authorization);
 
+		// 然后获取重定向uri ...
 		String redirectUri = authorizationRequest.getRedirectUri();
+		// 如果不存在,随便拿取一个 ..
 		if (!StringUtils.hasText(redirectUri)) {
 			redirectUri = registeredClient.getRedirectUris().iterator().next();
 		}
 
+		// 然后生成 授权码请求 认证 token ... 并将授权码返回给客户端 ...
 		return OAuth2AuthorizationCodeRequestAuthenticationToken.with(registeredClient.getClientId(), principal)
 				.authorizationUri(authorizationRequest.getAuthorizationUri())
 				.redirectUri(redirectUri)
@@ -285,6 +329,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 	}
 
 	private OAuth2AuthenticationValidator resolveAuthenticationValidator(String parameterName) {
+		// 如果存在,则返回,否则 默认返回的验证器解析器 返回一个 ...
 		OAuth2AuthenticationValidator authenticationValidator = this.authenticationValidatorResolver.apply(parameterName);
 		return authenticationValidator != null ?
 				authenticationValidator :
@@ -452,18 +497,22 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		return tokenContextBuilder.build();
 	}
 
+	// 是否需要 consent ..
 	private static boolean requireAuthorizationConsent(RegisteredClient registeredClient,
 			OAuth2AuthorizationRequest authorizationRequest, OAuth2AuthorizationConsent authorizationConsent) {
 
+		// 如果不需要, 直接返回 ..
 		if (!registeredClient.getClientSettings().isRequireAuthorizationConsent()) {
 			return false;
 		}
+		// openid 不需要 consent ..
+		// 这也就是google 为什么直接就登录了 ...
 		// 'openid' scope does not require consent
 		if (authorizationRequest.getScopes().contains(OidcScopes.OPENID) &&
 				authorizationRequest.getScopes().size() == 1) {
 			return false;
 		}
-
+		// 否则, 判断赞同的scopes 包含了请求的 scopes ....
 		if (authorizationConsent != null &&
 				authorizationConsent.getScopes().containsAll(authorizationRequest.getScopes())) {
 			return false;
@@ -503,6 +552,8 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 			RegisteredClient registeredClient, OAuth2AuthorizationRequest authorizationRequest) {
 
 		boolean redirectOnError = true;
+
+		// 无效请求, client_id / redirect_uri / state 不重定向 ..
 		if (error.getErrorCode().equals(OAuth2ErrorCodes.INVALID_REQUEST) &&
 				(parameterName.equals(OAuth2ParameterNames.CLIENT_ID) ||
 						parameterName.equals(OAuth2ParameterNames.REDIRECT_URI) ||
@@ -513,21 +564,31 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthenticationResult = authorizationCodeRequestAuthentication;
 
 		if (redirectOnError && !StringUtils.hasText(authorizationCodeRequestAuthentication.getRedirectUri())) {
+			// 从客户端配置中解析 redirect_uri ...
 			String redirectUri = resolveRedirectUri(authorizationRequest, registeredClient);
+			// 这很正常,要求 state 请求和响应必须匹配 ...
+			// 并且如果是 consent 则 返回 授权请求的 getState ... / 否则 返回认证的 state ...
 			String state = authorizationCodeRequestAuthentication.isConsent() && authorizationRequest != null ?
 					authorizationRequest.getState() : authorizationCodeRequestAuthentication.getState();
+
+			//
 			authorizationCodeRequestAuthenticationResult = from(authorizationCodeRequestAuthentication)
 					.redirectUri(redirectUri)
 					.state(state)
 					.build();
+			// 设置是否认证完成 ...
 			authorizationCodeRequestAuthenticationResult.setAuthenticated(authorizationCodeRequestAuthentication.isAuthenticated());
 		} else if (!redirectOnError && StringUtils.hasText(authorizationCodeRequestAuthentication.getRedirectUri())) {
+			// 不重定向,但是存在重定向地址 ...
 			authorizationCodeRequestAuthenticationResult = from(authorizationCodeRequestAuthentication)
+					// 阻止重定向 ...
 					.redirectUri(null)		// Prevent redirects
 					.build();
 			authorizationCodeRequestAuthenticationResult.setAuthenticated(authorizationCodeRequestAuthentication.isAuthenticated());
 		}
 
+		// 抛出这个异常 ...
+		// 包含了异常和 authentication ..
 		throw new OAuth2AuthorizationCodeRequestAuthenticationException(error, authorizationCodeRequestAuthenticationResult);
 	}
 
@@ -558,25 +619,33 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 		@Nullable
 		@Override
 		public OAuth2AuthorizationCode generate(OAuth2TokenContext context) {
+
 			if (context.getTokenType() == null ||
 					!OAuth2ParameterNames.CODE.equals(context.getTokenType().getValue())) {
 				return null;
 			}
 			Instant issuedAt = Instant.now();
+			// 标识Token 授权码存活时间 ...
 			Instant expiresAt = issuedAt.plus(context.getRegisteredClient().getTokenSettings().getAuthorizationCodeTimeToLive());
+			// 然后生成一个key
 			return new OAuth2AuthorizationCode(this.authorizationCodeGenerator.generateKey(), issuedAt, expiresAt);
 		}
 
 	}
 
+	/**
+	 * 也就是校验重定向uri 的合法性 ...
+	 */
 	private static class DefaultRedirectUriOAuth2AuthenticationValidator implements OAuth2AuthenticationValidator {
 
 		@Override
 		public void validate(OAuth2AuthenticationContext authenticationContext) {
+
 			OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication =
 					authenticationContext.getAuthentication();
 			RegisteredClient registeredClient = authenticationContext.get(RegisteredClient.class);
 
+			// 拿取请求中的重定向地址 ...
 			String requestedRedirectUri = authorizationCodeRequestAuthentication.getRedirectUri();
 
 			if (StringUtils.hasText(requestedRedirectUri)) {
@@ -586,14 +655,19 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 				try {
 					requestedRedirect = UriComponentsBuilder.fromUriString(requestedRedirectUri).build();
 				} catch (Exception ex) { }
+
+				// 如果为空,则报错 ... 或者包含碎片值 # ... 也成为瞄点值 ..
 				if (requestedRedirect == null || requestedRedirect.getFragment() != null) {
 					throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REDIRECT_URI,
 							authorizationCodeRequestAuthentication, registeredClient);
 				}
 
+				// 拿取Host ...
 				String requestedRedirectHost = requestedRedirect.getHost();
+//				  判断如果为空,或者为 localhsot
 				if (requestedRedirectHost == null || requestedRedirectHost.equals("localhost")) {
 					// As per https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-01#section-9.7.1
+					// 规范告诉我们应该使用类似循环ip地址,但是不应该使用localhost ,127.0.0.1 是一个好的选择 .....
 					// While redirect URIs using localhost (i.e., "http://localhost:{port}/{path}")
 					// function similarly to loopback IP redirects described in Section 10.3.3,
 					// the use of "localhost" is NOT RECOMMENDED.
@@ -606,10 +680,13 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 							authorizationCodeRequestAuthentication, registeredClient, null);
 				}
 
+				// 如果不是回环地址 ...
 				if (!isLoopbackAddress(requestedRedirectHost)) {
 					// As per https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-01#section-9.7
 					// When comparing client redirect URIs against pre-registered URIs,
 					// authorization servers MUST utilize exact string matching.
+					// 客户端返回的重定向地址必须是预先配置好的URIs ....
+					// 进行比较 ...
 					if (!registeredClient.getRedirectUris().contains(requestedRedirectUri)) {
 						throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REDIRECT_URI,
 								authorizationCodeRequestAuthentication, registeredClient);
@@ -620,7 +697,12 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 					// time of the request for loopback IP redirect URIs, to accommodate
 					// clients that obtain an available ephemeral port from the operating
 					// system at the time of the request.
+
+					// 否则 授权服务器必须允许任何端口(在此时请求,从请求中获取目标端口 ...)进行会话地址IP 从定向URI 拼接 ...
+//					为了适应客户端获取一个可用的短暂的端口(从操作系统中)进行请求
 					boolean validRedirectUri = false;
+
+					// 但是它还是匹配Url 是否匹配对应的port ...
 					for (String registeredRedirectUri : registeredClient.getRedirectUris()) {
 						UriComponentsBuilder registeredRedirect = UriComponentsBuilder.fromUriString(registeredRedirectUri);
 						registeredRedirect.port(requestedRedirect.getPort());
@@ -629,6 +711,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 							break;
 						}
 					}
+					// 如果无效,则返回 无效请求,重定向 URI 的问题 ...
 					if (!validRedirectUri) {
 						throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REDIRECT_URI,
 								authorizationCodeRequestAuthentication, registeredClient);
@@ -637,13 +720,16 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 
 			} else {
 				// ***** redirect_uri is NOT available in authorization request
-
+				// 否则抛出异常 ... 如果包含OPENID 或者 重定向URI 不止一个 ...
 				if (authorizationCodeRequestAuthentication.getScopes().contains(OidcScopes.OPENID) ||
 						registeredClient.getRedirectUris().size() != 1) {
 					// redirect_uri is REQUIRED for OpenID Connect
+					// OPenID Connect 必须在请求中包含重定向地址 ...
 					throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.REDIRECT_URI,
 							authorizationCodeRequestAuthentication, registeredClient);
 				}
+
+				// 没有就不处理 ....
 			}
 		}
 
@@ -681,6 +767,8 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationProvider implemen
 
 			Set<String> requestedScopes = authorizationCodeRequestAuthentication.getScopes();
 			Set<String> allowedScopes = registeredClient.getScopes();
+
+			// 允许的 scope 并没有包含所有请求的 .. 直接抛出异常
 			if (!requestedScopes.isEmpty() && !allowedScopes.containsAll(requestedScopes)) {
 				throwError(OAuth2ErrorCodes.INVALID_SCOPE, OAuth2ParameterNames.SCOPE,
 						authorizationCodeRequestAuthentication, registeredClient);

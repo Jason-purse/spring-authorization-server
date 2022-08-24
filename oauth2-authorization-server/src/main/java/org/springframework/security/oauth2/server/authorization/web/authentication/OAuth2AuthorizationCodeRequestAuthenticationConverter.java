@@ -47,6 +47,8 @@ import org.springframework.util.StringUtils;
  * for the OAuth 2.0 Authorization Code Grant and then converts it to
  * an {@link OAuth2AuthorizationCodeRequestAuthenticationToken} used for authenticating the request.
  *
+ * 尝试从请求中抓取授权请求(或者 Consent)  - 为了进行OAuth2.0 授权码授予活动,然后将它转换为OAuth2AuthorizationCodeRequestAuthenticationToken 被用来认证请求 ....
+ *
  * @author Joe Grandja
  * @since 0.1.2
  * @see AuthenticationConverter
@@ -56,6 +58,7 @@ import org.springframework.util.StringUtils;
 public final class OAuth2AuthorizationCodeRequestAuthenticationConverter implements AuthenticationConverter {
 	private static final String DEFAULT_ERROR_URI = "https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.2.1";
 	private static final String PKCE_ERROR_URI = "https://datatracker.ietf.org/doc/html/rfc7636#section-4.4.1";
+	// 匿名用户 ...
 	private static final Authentication ANONYMOUS_AUTHENTICATION = new AnonymousAuthenticationToken(
 			"anonymous", "anonymousUser", AuthorityUtils.createAuthorityList("ROLE_ANONYMOUS"));
 	private static final RequestMatcher OIDC_REQUEST_MATCHER = createOidcRequestMatcher();
@@ -65,15 +68,20 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 		MultiValueMap<String, String> parameters = OAuth2EndpointUtils.getParameters(request);
 
 		boolean authorizationRequest = false;
+
+		// get / 或者 oidc ...
+		// 在get的情况下, 表示一个授权码请求 ...
+		// 它需要
 		if ("GET".equals(request.getMethod()) || OIDC_REQUEST_MATCHER.matches(request)) {
 			authorizationRequest = true;
 
-			// response_type (REQUIRED)
+			// response_type (REQUIRED),并且响应类型必须是  Code ....
 			String responseType = request.getParameter(OAuth2ParameterNames.RESPONSE_TYPE);
 			if (!StringUtils.hasText(responseType) ||
 					parameters.get(OAuth2ParameterNames.RESPONSE_TYPE).size() != 1) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.RESPONSE_TYPE);
 			} else if (!responseType.equals(OAuth2AuthorizationResponseType.CODE.getValue())) {
+				// 如果响应类型
 				throwError(OAuth2ErrorCodes.UNSUPPORTED_RESPONSE_TYPE, OAuth2ParameterNames.RESPONSE_TYPE);
 			}
 		}
@@ -93,6 +101,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 		}
 
 		// redirect_uri (OPTIONAL)
+		// 重定向uri是可选的 ...
 		String redirectUri = parameters.getFirst(OAuth2ParameterNames.REDIRECT_URI);
 		if (StringUtils.hasText(redirectUri) &&
 				parameters.get(OAuth2ParameterNames.REDIRECT_URI).size() != 1) {
@@ -100,6 +109,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 		}
 
 		// scope (OPTIONAL)
+		// scope 可选的 ...
 		Set<String> scopes = null;
 		if (authorizationRequest) {
 			String scope = parameters.getFirst(OAuth2ParameterNames.SCOPE);
@@ -109,10 +119,12 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 			}
 			if (StringUtils.hasText(scope)) {
 				scopes = new HashSet<>(
+						// 通过空格 分离 socpe ..
 						Arrays.asList(StringUtils.delimitedListToStringArray(scope, " ")));
 			}
 		} else {
 			// Consent request
+			// 拿取所有的 scopes ...
 			if (parameters.containsKey(OAuth2ParameterNames.SCOPE)) {
 				scopes = new HashSet<>(parameters.get(OAuth2ParameterNames.SCOPE));
 			}
@@ -120,14 +132,17 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 
 		// state
 		// RECOMMENDED for Authorization Request
+		// state 授权请求中是推荐有的 ...
 		String state = parameters.getFirst(OAuth2ParameterNames.STATE);
 		if (authorizationRequest) {
+			// 可以没有 ...
 			if (StringUtils.hasText(state) &&
 					parameters.get(OAuth2ParameterNames.STATE).size() != 1) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.STATE);
 			}
 		} else {
 			// REQUIRED for Authorization Consent Request
+			// Consent 请求也需要 ...
 			if (!StringUtils.hasText(state) ||
 					parameters.get(OAuth2ParameterNames.STATE).size() != 1) {
 				throwError(OAuth2ErrorCodes.INVALID_REQUEST, OAuth2ParameterNames.STATE);
@@ -135,6 +150,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 		}
 
 		// code_challenge (REQUIRED for public clients) - RFC 7636 (PKCE)
+		// 有就判断 。。。
 		String codeChallenge = parameters.getFirst(PkceParameterNames.CODE_CHALLENGE);
 		if (StringUtils.hasText(codeChallenge) &&
 				parameters.get(PkceParameterNames.CODE_CHALLENGE).size() != 1) {
@@ -147,7 +163,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 				parameters.get(PkceParameterNames.CODE_CHALLENGE_METHOD).size() != 1) {
 			throwError(OAuth2ErrorCodes.INVALID_REQUEST, PkceParameterNames.CODE_CHALLENGE_METHOD, PKCE_ERROR_URI);
 		}
-
+		// 额外的参数 ...
 		Map<String, Object> additionalParameters = new HashMap<>();
 		parameters.forEach((key, value) -> {
 			if (!key.equals(OAuth2ParameterNames.RESPONSE_TYPE) &&
@@ -159,6 +175,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 			}
 		});
 
+		// 然后返回对应的  OAuth2AuthorizationCodeRequestAuthenticationToken ....
 		return OAuth2AuthorizationCodeRequestAuthenticationToken.with(clientId, principal)
 				.authorizationUri(authorizationUri)
 				.redirectUri(redirectUri)
@@ -169,6 +186,7 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationConverter impleme
 				.build();
 	}
 
+	// oidc 需要Post,且 响应类型不为空, 然后可以选择包含 scope ..
 	private static RequestMatcher createOidcRequestMatcher() {
 		RequestMatcher postMethodMatcher = request -> "POST".equals(request.getMethod());
 		RequestMatcher responseTypeParameterMatcher = request ->

@@ -135,6 +135,8 @@ public final class OAuth2AuthorizationCodeRequestAuthenticationToken extends Abs
 	 * Returns {@code true} if this {@code Authentication} represents an authorization consent request,
 	 * {@code false} otherwise.
 	 *
+	 * 标识这个请求是一个 授权 consent 请求(许可)
+	 *
 	 * @return {@code true} if this {@code Authentication} represents an authorization consent request, {@code false} otherwise
 	 */
 	public boolean isConsent() {

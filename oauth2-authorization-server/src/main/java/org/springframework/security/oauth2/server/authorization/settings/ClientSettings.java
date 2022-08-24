@@ -40,6 +40,9 @@ public final class ClientSettings extends AbstractSettings {
 	 * Returns {@code true} if the client is required to provide a proof key challenge and verifier
 	 * when performing the Authorization Code Grant flow. The default is {@code false}.
 	 *
+	 * 如果客户端需要提供一个 proof key challenge(并验证) (当执行授权码授予流时) ...
+	 * 默认是false ...
+	 *
 	 * @return {@code true} if the client is required to provide a proof key challenge and verifier, {@code false} otherwise
 	 */
 	public boolean isRequireProofKey() {

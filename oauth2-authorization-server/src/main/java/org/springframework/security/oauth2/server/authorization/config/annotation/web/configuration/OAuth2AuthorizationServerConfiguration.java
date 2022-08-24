@@ -41,6 +41,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 /**
  * {@link Configuration} for OAuth 2.0 Authorization Server support.
  *
+ * Authorization Server 支持的配置 ...
  * @author Joe Grandja
  * @since 0.0.1
  * @see OAuth2AuthorizationServerConfigurer
@@ -55,6 +56,7 @@ public class OAuth2AuthorizationServerConfiguration {
 		return http.build();
 	}
 
+	// 应用默认的 Security 配置 ..
 	// @formatter:off
 	public static void applyDefaultSecurity(HttpSecurity http) throws Exception {
 		OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =

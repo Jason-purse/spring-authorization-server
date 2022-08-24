@@ -63,6 +63,8 @@ import org.springframework.web.util.UriComponentsBuilder;
  * A {@code Filter} for the OAuth 2.0 Authorization Code Grant,
  * which handles the processing of the OAuth 2.0 Authorization Request (and Consent).
  *
+ * 它主要是OAuth 2.0 Authorization Code Grant的过滤器 ..
+ * 它主要处理 OAuth2.0 授权请求(以及 Consent) ...
  * @author Joe Grandja
  * @author Paurav Munshi
  * @author Daniel Garnier-Moiroux
@@ -109,7 +111,10 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 		Assert.notNull(authenticationManager, "authenticationManager cannot be null");
 		Assert.hasText(authorizationEndpointUri, "authorizationEndpointUri cannot be empty");
 		this.authenticationManager = authenticationManager;
+
+		// 授权端点 匹配器 ...
 		this.authorizationEndpointMatcher = createDefaultRequestMatcher(authorizationEndpointUri);
+		// 默认的转换器 ...
 		this.authenticationConverter = new OAuth2AuthorizationCodeRequestAuthenticationConverter();
 	}
 
@@ -139,19 +144,24 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
 			throws ServletException, IOException {
 
+		// 是否需要授权 ...
 		if (!this.authorizationEndpointMatcher.matches(request)) {
 			filterChain.doFilter(request, response);
 			return;
 		}
 
 		try {
+
+			// 转换为 ... OAuth2AuthorizationCodeRequestAuthenticationToken
 			OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication =
 					(OAuth2AuthorizationCodeRequestAuthenticationToken) this.authenticationConverter.convert(request);
 			authorizationCodeRequestAuthentication.setDetails(this.authenticationDetailsSource.buildDetails(request));
 
 			OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthenticationResult =
+					// OAuth2AuthorizationCodeRequestAuthenticationProvider  提供器 认证 ...
 					(OAuth2AuthorizationCodeRequestAuthenticationToken) this.authenticationManager.authenticate(authorizationCodeRequestAuthentication);
 
+			//如果没有认证, 标识 资源拥有者 没有认证,直接跳过认证处理,进入下一个过滤链, 它会触发 认证端点的 commence
 			if (!authorizationCodeRequestAuthenticationResult.isAuthenticated()) {
 				// If the Principal (Resource Owner) is not authenticated then
 				// pass through the chain with the expectation that the authentication process
@@ -160,10 +170,13 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 				return;
 			}
 
+			// 协商(认证之后,跳转页面进行授权 客户端访问 ...)
 			if (authorizationCodeRequestAuthenticationResult.isConsentRequired()) {
+				// 发送授权 ...
 				sendAuthorizationConsent(request, response, authorizationCodeRequestAuthentication, authorizationCodeRequestAuthenticationResult);
 				return;
 			}
+
 
 			this.authenticationSuccessHandler.onAuthenticationSuccess(
 					request, response, authorizationCodeRequestAuthenticationResult);
@@ -227,24 +240,33 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 		this.consentPage = consentPage;
 	}
 
+
+	// 发送协商,看怎么做的 ..
 	private void sendAuthorizationConsent(HttpServletRequest request, HttpServletResponse response,
 			OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication,
 			OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthenticationResult) throws IOException {
 
 		String clientId = authorizationCodeRequestAuthenticationResult.getClientId();
 		Authentication principal = (Authentication) authorizationCodeRequestAuthenticationResult.getPrincipal();
+		// 请求的 scope
 		Set<String> requestedScopes = authorizationCodeRequestAuthentication.getScopes();
+		// 授权的 scope...
 		Set<String> authorizedScopes = authorizationCodeRequestAuthenticationResult.getScopes();
+		// state ..
 		String state = authorizationCodeRequestAuthenticationResult.getState();
 
+		// 如果存在 consent uri ...
 		if (hasConsentUri()) {
+			// 然后将 scope 拼接过去, client_id  ....
 			String redirectUri = UriComponentsBuilder.fromUriString(resolveConsentUri(request))
 					.queryParam(OAuth2ParameterNames.SCOPE, String.join(" ", requestedScopes))
 					.queryParam(OAuth2ParameterNames.CLIENT_ID, clientId)
 					.queryParam(OAuth2ParameterNames.STATE, state)
 					.toUriString();
+			// 然后直接重定向 ..
 			this.redirectStrategy.sendRedirect(request, response, redirectUri);
 		} else {
+			// 否则直接显示 ..
 			DefaultConsentPage.displayConsent(request, response, clientId, principal, requestedScopes, authorizedScopes, state);
 		}
 	}
@@ -271,12 +293,17 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 
 		OAuth2AuthorizationCodeRequestAuthenticationToken authorizationCodeRequestAuthentication =
 				(OAuth2AuthorizationCodeRequestAuthenticationToken) authentication;
+
+		// 会默认给它给一个 .... 所以不需要担心 ...
 		UriComponentsBuilder uriBuilder = UriComponentsBuilder
 				.fromUriString(authorizationCodeRequestAuthentication.getRedirectUri())
+				 // 这是成功响应,将Code 设置为 授权码 ..
 				.queryParam(OAuth2ParameterNames.CODE, authorizationCodeRequestAuthentication.getAuthorizationCode().getTokenValue());
+		// 判断是否有State,如果有则设置State 设置 ..
 		if (StringUtils.hasText(authorizationCodeRequestAuthentication.getState())) {
 			uriBuilder.queryParam(OAuth2ParameterNames.STATE, authorizationCodeRequestAuthentication.getState());
 		}
+		// 并重定向 ...
 		this.redirectStrategy.sendRedirect(request, response, uriBuilder.toUriString());
 	}
 
@@ -312,17 +339,23 @@ public final class OAuth2AuthorizationEndpointFilter extends OncePerRequestFilte
 
 	/**
 	 * For internal use only.
+	 *
+	 * 仅仅内部使用的默认协商页面 .....
 	 */
 	private static class DefaultConsentPage {
 		private static final MediaType TEXT_HTML_UTF8 = new MediaType("text", "html", StandardCharsets.UTF_8);
 
+
+		// core ...
 		private static void displayConsent(HttpServletRequest request, HttpServletResponse response,
 				String clientId, Authentication principal, Set<String> requestedScopes, Set<String> authorizedScopes, String state)
 				throws IOException {
 
+			// 生成页面 ...
 			String consentPage = generateConsentPage(request, clientId, principal, requestedScopes, authorizedScopes, state);
 			response.setContentType(TEXT_HTML_UTF8.toString());
 			response.setContentLength(consentPage.getBytes(StandardCharsets.UTF_8).length);
+			// 它没有 close ..
 			response.getWriter().write(consentPage);
 		}
 
